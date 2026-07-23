@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openhub-tui"
-version = "0.1.0"
+version = "0.1.1"
 description = "Terminal discovery hub and package manager for AI coding tools, MCP servers, and agent skills."
 readme = "README.md"
 authors = [
