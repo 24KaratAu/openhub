@@ -61,7 +61,7 @@ class RepoListItem(ListItem):
         # Visual layout rendering using rich-text markup
         card_content = (
             f"[bold #a9b1d6]{self.repo['full_name']}[/] "
-            f" [dim]|[/]  ★ {stars_formatted}  [dim]|[/]  {use_case}  [dim]|[/]  [bold {score_color}]Quality: {q_score} ({q_stars} {q_label})[/]\n"
+            f" [dim]|[/]  ★ {stars_formatted}  [dim]|[/]  [bold #7aa2f7][{impl_type}][/]  [dim]|[/]  {use_case}  [dim]|[/]  [bold {score_color}]Quality: {q_score} ({q_stars} {q_label})[/]\n"
             f"[dim #565f89]{lang}  •  {license_name} License  •  Difficulty: [/][bold {diff_color}]{difficulty}[/]  [dim #565f89]•  Updated: {self.repo.get('updated_at', '')[:10]}[/]"
         )
         

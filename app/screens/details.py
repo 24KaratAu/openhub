@@ -217,8 +217,15 @@ class RepoDetailsScreen(Screen):
         else:
             q_stars, q_label = "★☆☆☆☆", "Poor"
 
+        impl_type = self.repo.get("impl_type") or "Skills"
+        if "skill" in impl_type.lower():
+            action_hint = "[bold #9ece6a]Recommended: Press E to Export Skill (no download needed)[/]"
+        else:
+            action_hint = "[bold #7aa2f7]Recommended: Press Enter to Install Binary / Server[/]"
+
         meta_info = (
             f"[bold #7aa2f7]{self.repo['name']}[/]\n\n"
+            f"[bold #7aa2f7]Type:[/] {impl_type}\n"
             f"[bold #e0af68]Stars:[/] {stars}\n"
             f"[bold #e0af68]Forks:[/] {forks}\n"
             f"[bold #e0af68]Language:[/] {lang}\n"
@@ -226,6 +233,7 @@ class RepoDetailsScreen(Screen):
             f"[bold #9ece6a]Difficulty:[/] {difficulty}\n"
             f"[bold #7aa2f7]Score:[/] {q_score}\n"
             f"[bold #f7768e]Rating:[/] {q_stars} {q_label}\n\n"
+            f"{action_hint}\n\n"
             f"[dim]Owner: {self.repo['owner']}[/]\n"
             f"[dim]Updated: {self.repo.get('updated_at', '')[:10]}[/]\n"
         )
