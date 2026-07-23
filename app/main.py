@@ -69,8 +69,10 @@ class InstalledView(Vertical):
             inst_list.append(item)
 
 
-class OpenCodeHubApp(App):
-    """The visual, keyboard-first Hub for the OpenCode Ecosystem."""
+class OpenHubApp(App):
+    """The visual, keyboard-first Hub for AI Coding Tools, Skills, and Agents."""
+    TITLE = "OpenHub"
+    SUB_TITLE = "Package Manager for AI Tools & Agents"
 
     CSS = """
     Screen {
@@ -500,7 +502,7 @@ class OpenCodeHubApp(App):
 
 def cli():
     """Main CLI entrypoint for openhub command."""
-    OpenCodeHubApp().run()
+    OpenHubApp().run()
 
 if __name__ == "__main__":
     cli()
