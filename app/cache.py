@@ -213,8 +213,45 @@ def update_repository_readme(full_name, readme_content):
     conn.commit()
     conn.close()
 
+def find_skill_md(dir_path: str) -> tuple[str | None, str | None]:
+    """Finds directory containing SKILL.md in dir_path or nested subdirectories."""
+    if os.path.exists(os.path.join(dir_path, "SKILL.md")):
+        return dir_path, os.path.join(dir_path, "SKILL.md")
+    for root, dirs, files in os.walk(dir_path):
+        if "SKILL.md" in files:
+            return root, os.path.join(root, "SKILL.md")
+    return None, None
+
+def sync_installed_from_disk():
+    """Scans local project and global skill directories to populate installed_packages table."""
+    dirs_to_scan = [
+        os.path.abspath("./.opencode/skills"),
+        os.path.abspath("./.agents/skills"),
+        os.path.abspath("./.claude/skills"),
+        os.path.expanduser("~/.config/opencode/skills"),
+        os.path.expanduser("~/.agents/skills"),
+        os.path.expanduser("~/.claude/skills"),
+        os.path.expanduser("~/.claude/plugins"),
+    ]
+    for base_dir in dirs_to_scan:
+        if not os.path.exists(base_dir):
+            continue
+        try:
+            for item in os.listdir(base_dir):
+                item_path = os.path.join(base_dir, item)
+                if os.path.isdir(item_path):
+                    skill_dir, skill_file = find_skill_md(item_path)
+                    if skill_file or os.path.exists(os.path.join(item_path, ".claude-plugin")):
+                        add_installed_package(item, "1.0.0", "INSTALLED", "Skills")
+        except Exception as e:
+            logger.warning(f"Error scanning directory {base_dir} for skills: {e}")
+
 def get_installed_packages():
-    """Gets all installed packages."""
+    """Gets all installed packages (syncing with disk first)."""
+    try:
+        sync_installed_from_disk()
+    except Exception as e:
+        logger.warning(f"Error syncing installed packages from disk: {e}")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM installed_packages ORDER BY installed_at DESC")

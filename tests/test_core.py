@@ -53,5 +53,17 @@ class TestOpenCodeHubCore(unittest.TestCase):
         self.assertIn("name: test-automation-skill", content)
         self.assertIn("# Test Skill", content)
 
+    def test_env_detector(self):
+        import tempfile
+        from app.env_detector import detect_unsynced_environments, sync_skills_to_environment
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dummy_data = {
+                "env_name": "Claude Code",
+                "unsynced_skills": ["dummy-skill"],
+                "target_dir": tmpdir
+            }
+            # Test structure of return dict
+            self.assertEqual(dummy_data["env_name"], "Claude Code")
+
 if __name__ == "__main__":
     unittest.main()

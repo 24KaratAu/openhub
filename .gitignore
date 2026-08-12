@@ -42,3 +42,4 @@ ENV/
 # Local OpenCode runtime folders
 .agents/
 .opencode/
+.claude/

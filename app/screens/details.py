@@ -130,12 +130,12 @@ class ExportConfirmScreen(ModalScreen[str]):
     def compose(self) -> ComposeResult:
         yield Vertical(
             Label(f"Export Skill: {self.repo_slug}", id="confirm-title"),
-            Static("[bold #7aa2f7]Select destination directory for SKILL.md:[/]\n\n"
-                   "• [bold #9ece6a]Project (P):[/] Write to `./.opencode/skills/` (Local workspace)\n"
-                   "• [bold #e0af68]Global (G):[/]  Write to `~/.config/opencode/skills/` (System user)", id="confirm-body"),
+            Static("[bold #7aa2f7]Select destination target scope for SKILL.md:[/]\n\n"
+                   "• [bold #9ece6a]Project Workspace (P):[/] Writes to `./.agents/skills/`, `./.claude/skills/`, & `./.opencode/skills/`\n"
+                   "• [bold #e0af68]Global System (G):[/]      Writes to `~/.agents/skills/`, `~/.claude/skills/`, & `~/.config/opencode/skills/`", id="confirm-body"),
             Horizontal(
-                Button("Project (.opencode)", variant="success", id="btn-project"),
-                Button("Global (~/.config)", variant="primary", id="btn-global"),
+                Button("Project Workspace (P)", variant="success", id="btn-project"),
+                Button("Global System (G)", variant="primary", id="btn-global"),
                 Button("Cancel", variant="error", id="btn-cancel"),
                 classes="confirm-buttons"
             ),

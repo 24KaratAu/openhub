@@ -95,8 +95,8 @@ The Spotlight search overlay uses `RapidFuzz` to calculate token-ratio similarit
 
 OpenCode Hub supports exporting repository instructions directly into OpenCode-native skill formats via `app/exporter.py`:
 
-- **Project Destination (`P`)**: `./.opencode/skills/<skill-slug>/SKILL.md` (Local project root)
-- **Global Destination (`G`)**: `~/.config/opencode/skills/<skill-slug>/SKILL.md` (System user config)
+- **Project Destination (`P`)**: `./.agents/skills/<skill-slug>/SKILL.md`, `./.opencode/skills/<skill-slug>/SKILL.md`, and `./.claude/skills/<skill-slug>/SKILL.md` (Local project root)
+- **Global Destination (`G`)**: `~/.agents/skills/<skill-slug>/SKILL.md`, `~/.config/opencode/skills/<skill-slug>/SKILL.md`, and `~/.claude/skills/<skill-slug>/SKILL.md` (System user config)
 
 Exported files are structured with YAML frontmatter headers:
 ```markdown

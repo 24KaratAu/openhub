@@ -33,22 +33,26 @@ def export_skill(repo: dict, readme_content: str = "", target: str = "project") 
     if target == "global":
         skill_base_dirs = [
             os.path.expanduser("~/.config/opencode/skills"),
-            os.path.expanduser("~/.agents/skills")
+            os.path.expanduser("~/.agents/skills"),
+            os.path.expanduser("~/.claude/skills"),
         ]
         agent_dirs = [
             os.path.expanduser("~/.config/opencode/agent"),
             os.path.expanduser("~/.config/opencode/agents"),
-            os.path.expanduser("~/.agents/agents")
+            os.path.expanduser("~/.agents/agents"),
+            os.path.expanduser("~/.claude/agents"),
         ]
     else: # default to project
         skill_base_dirs = [
             os.path.abspath("./.opencode/skills"),
-            os.path.abspath("./.agents/skills")
+            os.path.abspath("./.agents/skills"),
+            os.path.abspath("./.claude/skills"),
         ]
         agent_dirs = [
             os.path.abspath("./.opencode/agent"),
             os.path.abspath("./.opencode/agents"),
-            os.path.abspath("./.agents/agents")
+            os.path.abspath("./.agents/agents"),
+            os.path.abspath("./.claude/agents"),
         ]
 
     # Format SKILL.md content

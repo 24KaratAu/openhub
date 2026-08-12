@@ -318,6 +318,27 @@ class OpenHubApp(App):
         asyncio.create_task(self.fetch_registry_async())
         # Background: quality scorer
         asyncio.create_task(self.run_quality_scorer_worker())
+        
+        # Check for newly detected unsynced AI environments (e.g. Claude Code)
+        self.call_after_refresh(self.check_env_sync)
+
+    def check_env_sync(self) -> None:
+        """Prompts user to sync skills if a new AI coding environment (like Claude Code) is detected."""
+        from app.env_detector import detect_unsynced_environments, sync_skills_to_environment
+        from app.screens import EnvSyncModal
+
+        env_data = detect_unsynced_environments()
+        if env_data:
+            def handle_sync_result(do_sync: bool) -> None:
+                if do_sync:
+                    success, count, msg = sync_skills_to_environment(env_data)
+                    if success:
+                        self.notify(msg, title="Environment Synced", severity="information")
+                        self.refresh_active_views()
+                else:
+                    self.notify("Skipped environment sync. You can export skills anytime.", title="Sync Skipped", severity="warning")
+
+            self.push_screen(EnvSyncModal(env_data), handle_sync_result)
 
     async def fetch_registry_async(self) -> None:
         """Fetches trending items from GitHub in the background without blocking UI."""
