@@ -68,7 +68,7 @@ openhub
 
 OpenHub relies on deterministic algorithms rather than subjective metrics to score quality, classify difficulty levels, and curate sections.
 
-Read the full technical documentation in [`HOW_IT_WORKS.md`](file:///home/au24/Documents/opencode-project/HOW_IT_WORKS.md).
+Read the full technical documentation in [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 
 ---
 

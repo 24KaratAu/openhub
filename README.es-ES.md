@@ -68,7 +68,7 @@ openhub
 
 OpenHub se basa en algoritmos deterministas en lugar de métricas subjetivas para calificar la calidad, clasificar los niveles de dificultad y curar las secciones.
 
-Lea la documentación técnica completa en [`HOW_IT_WORKS.md`](file:///home/au24/Documents/opencode-project/HOW_IT_WORKS.md).
+Lea la documentación técnica completa en [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 
 ---
 
