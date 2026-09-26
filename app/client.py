@@ -1,3 +1,5 @@
+import os
+import re
 import httpx
 import logging
 from abc import ABC, abstractmethod
@@ -550,14 +552,29 @@ class Provider(ABC):
         """Search repositories on the remote registry."""
         pass
 
+RATE_LIMIT_HINT = "set GITHUB_TOKEN to raise GitHub's limit"
+
+
+def github_headers() -> Dict[str, str]:
+    """Default GitHub API headers. Works anonymously (60 req/h, 10 searches/min); a GITHUB_TOKEN or
+    GH_TOKEN environment variable raises that to 5000 req/h and 30 searches/min."""
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "OpenCode-Hub-TUI/1.0"
+    }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token.strip()}"
+    return headers
+
+
 class GitHubProvider(Provider):
     def __init__(self):
-        # Public queries do not require authentication for simple searches, keeping things zero-config
-        headers = {
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "OpenCode-Hub-TUI/1.0"
-        }
-        self.client = httpx.AsyncClient(headers=headers, timeout=12.0)
+        self.client = httpx.AsyncClient(headers=github_headers(), timeout=12.0)
+        # Set when GitHub refuses a request for rate limiting, so the UI can say results are incomplete
+        self.rate_limited = False
+        self.failed_queries = 0
+        self.total_queries = 0
 
     def _map_repo(self, item: Dict[str, Any]) -> Dict[str, Any]:
         """Maps GitHub raw API response format to standard OpenCode structure."""
@@ -591,6 +608,8 @@ class GitHubProvider(Provider):
             )
             if response.status_code in (403, 429):
                 logger.warning(f"GitHub rate limit hit for query: {q[:40]}")
+                self.rate_limited = True
+                self.failed_queries += 1
                 return []
             if response.status_code == 422:
                 logger.warning(f"GitHub rejected query syntax (422): {q[:40]}")
@@ -600,6 +619,7 @@ class GitHubProvider(Provider):
             return data.get("items", [])
         except Exception as e:
             logger.warning(f"GitHub search failed for '{q[:40]}': {e}")
+            self.failed_queries += 1
             return []
 
     async def fetch_trending(self) -> List[Dict[str, Any]]:
@@ -627,10 +647,11 @@ class GitHubProvider(Provider):
         
         async def throttled_search(q: str) -> List[Dict[str, Any]]:
             async with sem:
-                result = await self._github_search(q, per_page=30)
+                result = await self._github_search(q, per_page=100)
                 await asyncio.sleep(1)  # Brief pause after each request
                 return result
         
+        self.total_queries = len(all_queries)
         # Fire all queries concurrently (semaphore limits to 3 at a time)
         results = await asyncio.gather(*[throttled_search(q) for q in all_queries], return_exceptions=True)
         
@@ -651,8 +672,12 @@ class GitHubProvider(Provider):
             return SEED_REPOSITORIES
         return all_repos
 
-    async def fetch_readme(self, full_name: str) -> str:
-        """Fetches the README file for a given repository."""
+    async def fetch_readme(self, full_name: str) -> str | None:
+        """Fetches the README file for a given repository.
+
+        Returns "" if the repository has no README, or None if GitHub couldn't be reached or
+        refused the request (rate limit), so callers can retry later instead of caching a failure.
+        """
         branches = ["main", "master", "develop"]
         for branch in branches:
             url = f"https://raw.githubusercontent.com/{full_name}/{branch}/README.md"
@@ -670,15 +695,68 @@ class GitHubProvider(Provider):
                 import base64
                 content_b64 = response.json().get("content", "")
                 return base64.b64decode(content_b64).decode("utf-8", errors="ignore")
+            if response.status_code == 404:
+                return ""
+            if response.status_code in (403, 429):
+                self.rate_limited = True
+            logger.warning(f"README lookup for {full_name} returned HTTP {response.status_code}")
         except Exception as e:
             logger.error(f"Failed to fetch readme for {full_name}: {e}")
-            
-        return f"# {full_name}\n\nCould not fetch README from GitHub. Ensure you are connected to the internet."
+        return None
 
     async def search(self, query: str) -> List[Dict[str, Any]]:
         """Performs remote search on GitHub using httpx params dict for correct encoding."""
         items = await self._github_search(f"{query} in:name,description", per_page=30)
         return [self._map_repo(item) for item in items]
+
+    async def fetch_repo(self, full_name: str) -> Dict[str, Any] | None:
+        """Fetches metadata for a single repository (used for skills not in the trending cache)."""
+        try:
+            response = await self.client.get(f"https://api.github.com/repos/{full_name}")
+            if response.status_code == 200:
+                return self._map_repo(response.json())
+            logger.warning(f"Repo lookup for {full_name} returned HTTP {response.status_code}")
+        except Exception as e:
+            logger.warning(f"Repo lookup for {full_name} failed: {e}")
+        return None
+
+    async def fetch_latest_version(self, full_name: str, skill_name: str) -> Dict[str, Any]:
+        """
+        Finds the newest published version of a skill repo.
+        Uses the latest GitHub release tag; for repos without releases, reads the version
+        from the matching SKILL.md on the default branch.
+        Returns {"version", "ref", "error"} where ref is the tag to download (None = default branch).
+        """
+        from app.local_skills import normalize_version
+        try:
+            response = await self.client.get(f"https://api.github.com/repos/{full_name}/releases/latest")
+            if response.status_code == 200:
+                tag = response.json().get("tag_name")
+                return {"version": normalize_version(tag), "ref": tag, "error": None}
+            if response.status_code in (403, 429):
+                self.rate_limited = True
+                return {"version": None, "ref": None,
+                        "error": f"GitHub rate limit reached, try again later or {RATE_LIMIT_HINT}"}
+            if response.status_code != 404:
+                return {"version": None, "ref": None, "error": f"GitHub returned HTTP {response.status_code}"}
+
+            # No releases: look for the skill's SKILL.md on the default branch
+            response = await self.client.get(f"https://api.github.com/repos/{full_name}/git/trees/HEAD",
+                                             params={"recursive": "1"})
+            if response.status_code != 200:
+                return {"version": None, "ref": None, "error": f"GitHub returned HTTP {response.status_code}"}
+            skill_files = [t["path"] for t in response.json().get("tree", []) if t["path"].endswith("SKILL.md")]
+            skill_files.sort(key=lambda p: (f"/{skill_name}/SKILL.md" not in f"/{p}", p.count("/")))
+            if not skill_files:
+                return {"version": None, "ref": None, "error": "No SKILL.md found in repository"}
+            raw = await self.client.get(f"https://api.github.com/repos/{full_name}/contents/{skill_files[0]}",
+                                        headers={"Accept": "application/vnd.github.raw"})
+            match = re.search(r'^version:\s*["\']?([^"\'\n]+)', raw.text, re.MULTILINE) if raw.status_code == 200 else None
+            return {"version": match.group(1).strip() if match else None, "ref": None,
+                    "error": None if match else "Upstream SKILL.md has no version field"}
+        except Exception as e:
+            logger.warning(f"Latest version lookup for {full_name} failed: {e}")
+            return {"version": None, "ref": None, "error": f"Could not reach GitHub: {str(e) or type(e).__name__}"}
 
     async def close(self):
         await self.client.aclose()

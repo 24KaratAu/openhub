@@ -60,7 +60,16 @@ openhub
 4. **Scannable Metadata Cards**: Repository items render with visual quality ratings (`★★★★★`), language tags, and difficulty levels.
 5. **Instant Boot & Background Sync**: Boots instantly (< 100ms) from local SQLite cache while fresh GitHub data syncs silently in background threads.
 6. **Universal Skill Export**: Press `E` to export 1-click `SKILL.md` prompt instructions directly to `./.agents/skills/` and `./.opencode/skills/`.
-7. **Activity History Log**: Logs all actions (Installed, Exported, Failed, Removed) to a persistent local SQLite database.
+7. **Activity History Log**: Logs all actions (Installed, Updated, Exported, Failed, Removed) to a persistent local SQLite database.
+8. **Installed Skill Updates**: The Installed view reads each skill's `SKILL.md` (`version`, `repository`) and shows whether a newer release exists on GitHub. Press `U` on a skill's details page to update every installed copy; the previous version is backed up to `~/.cache/opencode-hub/backups/` and restored automatically if the update fails.
+
+### GitHub Rate Limits
+
+OpenHub works without a GitHub account, but anonymous requests are limited to 60 per hour and 10 searches per minute. To raise that to 5,000 per hour and 30 searches per minute, set a token (a fine-grained token with public repository read access is enough):
+
+```bash
+export GITHUB_TOKEN=<your-token>   # GH_TOKEN also works
+```
 
 ---
 
@@ -82,6 +91,7 @@ Read the full technical documentation in [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 | **`S`** / **`/`** | Toggle Spotlight Search palette |
 | **`I`** | View Installed packages |
 | **`E`** | Export Skill directly (`SKILL.md` & Agent definition) |
+| **`U`** | Update an installed skill from its GitHub source (in Details) |
 | **`L`** | View Operation History logs |
 | **`R`** | Refresh cache and sync repositories |
 | **`F`** | Cycle implementation type filters (in Browse mode) |
@@ -115,6 +125,7 @@ openhub/
     ├── classifier.py       # Heuristic classification & Quality Score algorithms
     ├── exporter.py         # Universal SKILL.md & Agent exporter
     ├── installer.py        # Asynchronous installation runner subprocess
+    ├── local_skills.py     # Installed skill scanner, version checks & updater
     │
     ├── screens/            # UI Screen views
     │   ├── home.py         # Home Dashboard view

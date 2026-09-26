@@ -41,20 +41,9 @@ class BrowseView(ScrollableContainer):
         self.refresh_list()
 
     def refresh_list(self) -> None:
-        repos = get_repositories(limit=200)
+        filtered_repos = get_repositories(use_case=self.use_case, impl_type=self.impl_filter)
         browse_list = self.query_one("#browse-list", ListView)
         browse_list.clear()
-
-        filtered_repos = [
-            r for r in repos 
-            if (r.get("use_case") or "").lower() == self.use_case.lower()
-        ]
-
-        if self.impl_filter:
-            filtered_repos = [
-                r for r in filtered_repos 
-                if (r.get("impl_type") or "").lower() == self.impl_filter.lower()
-            ]
 
         if not filtered_repos:
             browse_list.append(ListItem(Label(f"No repositories found matching '{self.use_case}' / filter '{self.impl_filter or 'All'}'")))

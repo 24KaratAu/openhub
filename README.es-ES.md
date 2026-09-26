@@ -60,7 +60,16 @@ openhub
 4. **Tarjetas de Metadatos Analizables**: Los elementos del repositorio se renderizan con calificaciones de calidad visuales (`★★★★★`), etiquetas de lenguaje y niveles de dificultad.
 5. **Arranque Instantáneo y Sincronización en Segundo Plano**: Arranca instantáneamente (< 100ms) desde la caché local de SQLite mientras los datos frescos de GitHub se sincronizan silenciosamente en hilos de fondo.
 6. **Exportación Universal de Habilidades**: Presione `E` para exportar instrucciones de prompt `SKILL.md` con un solo clic directamente a `./.agents/skills/` y `./.opencode/skills/`.
-7. **Log de Historial de Actividad**: Registra todas las acciones (Instalado, Exportado, Fallido, Eliminado) en una base de datos local SQLite persistente.
+7. **Log de Historial de Actividad**: Registra todas las acciones (Instalado, Actualizado, Exportado, Fallido, Eliminado) en una base de datos local SQLite persistente.
+8. **Actualización de Habilidades Instaladas**: La vista de Instalados lee el `SKILL.md` de cada habilidad (`version`, `repository`) y muestra si hay una versión más reciente en GitHub. Presione `U` en la página de detalles de una habilidad para actualizar todas sus copias instaladas; la versión anterior se respalda en `~/.cache/opencode-hub/backups/` y se restaura automáticamente si la actualización falla.
+
+### Límites de GitHub
+
+OpenHub funciona sin una cuenta de GitHub, pero las solicitudes anónimas están limitadas a 60 por hora y 10 búsquedas por minuto. Para aumentarlo a 5.000 por hora y 30 búsquedas por minuto, configure un token (basta con un token de acceso de solo lectura a repositorios públicos):
+
+```bash
+export GITHUB_TOKEN=<su-token>   # GH_TOKEN también funciona
+```
 
 ---
 
@@ -82,6 +91,7 @@ Lea la documentación técnica completa en [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 | **`S`** / **`/`** | Alternar paleta de Búsqueda Spotlight |
 | **`I`** | Ver paquetes Instalados |
 | **`E`** | Exportar Habilidad directamente (`SKILL.md` y definición de Agente) |
+| **`U`** | Actualizar una habilidad instalada desde su origen en GitHub (en Detalles) |
 | **`L`** | Ver logs del Historial de Operaciones |
 | **`R`** | Refrescar caché y sincronizar repositorios |
 | **`F`** | Ciclar filtros de tipo de implementación (en modo Explorar) |

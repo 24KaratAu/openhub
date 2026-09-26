@@ -26,7 +26,7 @@ class SearchScreen(ModalScreen):
         )
 
     def on_mount(self) -> None:
-        self.repos = get_repositories(limit=500)
+        self.repos = get_repositories()
         self._remote_fetched_for = set()
         self._debounce_timer = None
         self.query_one("#search-input", Input).focus()
@@ -106,18 +106,33 @@ class SearchScreen(ModalScreen):
         from app.client import GitHubProvider
         from app.cache import save_repositories, get_repositories
 
+        rate_limited = False
         try:
             provider = GitHubProvider()
             remote_repos = await provider.search(query)
+            rate_limited = provider.rate_limited
             await provider.close()
         except Exception:
             remote_repos = []
 
         results_list = self.query_one("#search-results-list", ListView)
 
+        if rate_limited:
+            # Allow a retry once the limit resets, and tell the user why GitHub results are missing
+            from app.client import RATE_LIMIT_HINT
+            self._remote_fetched_for.discard(query)
+            input_widget = self.query_one("#search-input", Input)
+            if input_widget.value.strip() == query:
+                if results_list.children and not hasattr(results_list.children[-1], "repo"):
+                    results_list.children[-1].remove()
+                results_list.append(ListItem(Label(
+                    f"GitHub search is rate-limited, showing cached results only. "
+                    f"Retype in a minute, or {RATE_LIMIT_HINT}.")))
+            return
+
         if remote_repos:
             save_repositories(remote_repos)
-            self.repos = get_repositories(limit=500)
+            self.repos = get_repositories()
 
             # Re-render if the user's active query matches
             input_widget = self.query_one("#search-input", Input)

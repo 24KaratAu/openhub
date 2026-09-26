@@ -1,11 +1,13 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, ListView, ListItem, Label, Static, ContentSwitcher
 from textual.screen import Screen
+from textual.markup import escape
 
 from app.cache import (
     init_db, get_repositories, get_installed_packages, save_repositories, 
@@ -39,12 +41,20 @@ class InstalledView(Vertical):
             inst_list.append(ListItem(Label("No packages installed yet. Select a repo and press Enter to install.")))
             return
 
+        from app.local_skills import update_status
+
         for inst in installed:
             slug = inst["package_slug"]
             version = inst["version"]
-            status = inst["status"]
             impl_type = inst["impl_type"]
-            date_inst = inst["installed_at"]
+            date_inst = (inst["installed_at"] or "")[:10]
+            status_label, status_color = update_status(inst)
+            if inst.get("local_paths"):
+                location = inst["local_paths"][0].replace(os.path.expanduser("~"), "~", 1)
+                if len(inst["local_paths"]) > 1:
+                    location += f" (+{len(inst['local_paths']) - 1} more)"
+            else:
+                location = "managed by opencode"
             
             # Type tag formatting
             icon = "[Agent]"
@@ -58,9 +68,10 @@ class InstalledView(Vertical):
                 icon = "[CLI]"
 
             text = (
-                f"[bold #9ece6a]{icon} {slug}[/]  [dim]|[/]  [bold #7aa2f7]Type:[/] {impl_type}  "
-                f"[dim]|[/]  [bold #e0af68]Version:[/] {version}  [dim]|[/]  [bold #9ece6a]Status:[/] {status}\n"
-                f"   [dim #565f89]Installed on: {date_inst}[/]"
+                f"[bold #9ece6a]{icon} {escape(slug)}[/]  [dim]|[/]  [bold #e0af68]v{escape(version)}[/]  "
+                f"[dim]|[/]  [bold {status_color}]{escape(status_label)}[/]\n"
+                f"   [dim #565f89]{escape(inst.get('repo_slug') or 'no source repo')}  •  {escape(location)}  •  "
+                f"installed {date_inst}[/]"
             )
             
             # Attach metadata to list item for selection details
@@ -251,6 +262,12 @@ class OpenHubApp(App):
         ("q", "quit", "Quit"),
     ]
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        # Child views query the database while mounting, which happens before on_mount below,
+        # so the schema must exist (and be migrated) first
+        init_db()
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Container(id="main-layout"):
@@ -301,11 +318,10 @@ class OpenHubApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        init_db()
         self.provider = GitHubProvider()
         
         # INSTANT BOOT: Load cached repos from SQLite first, or seed if empty
-        cached = get_repositories(limit=500)
+        cached = get_repositories(limit=1)
         if not cached:
             from app.client import SEED_REPOSITORIES
             save_repositories(SEED_REPOSITORIES)
@@ -343,13 +359,24 @@ class OpenHubApp(App):
     async def fetch_registry_async(self) -> None:
         """Fetches trending items from GitHub in the background without blocking UI."""
         logger.info("Starting background repository synchronization")
+        from app.client import RATE_LIMIT_HINT
         try:
+            self.provider.rate_limited = False
+            self.provider.failed_queries = 0
             repos = await self.provider.fetch_trending()
             if repos:
                 save_repositories(repos)
                 self.refresh_active_views()
-                self.notify(f"Registry synced: {len(repos)} repos loaded from GitHub.", title="Sync Complete", severity="information")
-                logger.info(f"Background sync complete: {len(repos)} repos")
+                if self.provider.failed_queries:
+                    reason = "were rate-limited" if self.provider.rate_limited else "failed (network error)"
+                    hint = f"Wait a minute and press R, or {RATE_LIMIT_HINT}." if self.provider.rate_limited else "Press R to retry."
+                    self.notify(f"{self.provider.failed_queries} of {self.provider.total_queries} GitHub searches {reason}, "
+                                f"so only {len(repos)} repos were refreshed. Cached repos are still shown. {hint}",
+                                title="Sync Incomplete", severity="warning", timeout=10)
+                else:
+                    self.notify(f"Registry synced: {len(repos)} repos loaded from GitHub.", title="Sync Complete", severity="information")
+                logger.info(f"Background sync complete: {len(repos)} repos "
+                            f"({self.provider.failed_queries} searches failed, rate limited: {self.provider.rate_limited})")
         except Exception as e:
             logger.warning(f"Background sync failed: {e}")
             self.notify("GitHub sync failed. Showing cached data.", title="Sync Error", severity="warning")
@@ -374,12 +401,18 @@ class OpenHubApp(App):
                 if not unscored:
                     continue
 
+                backoff = False
                 for r in unscored:
                     r["tags"] = eval(r["tags"]) if isinstance(r["tags"], str) else r["tags"]
                     
                     logger.info(f"Worker scoring: {r['full_name']}")
                     # Fetch readme for smart classification/scoring
                     readme = await self.provider.fetch_readme(r["full_name"])
+                    if readme is None:
+                        # Network error or rate limit: leave unscored so it's retried, and back off
+                        logger.warning(f"Worker could not fetch README for {r['full_name']}, retrying later")
+                        backoff = True
+                        break
                     
                     # Compute classification and quality scores
                     use_case, impl_type, difficulty = classify_repository(r, readme)
@@ -393,7 +426,7 @@ class OpenHubApp(App):
                     SET use_case=?, impl_type=?, difficulty=?, readme_preview=?, quality_score=?, quality_breakdown=? 
                     WHERE full_name=?
                     """, (
-                        use_case, impl_type, difficulty, readme, q["score"], 
+                        use_case, impl_type, difficulty, readme or None, q["score"], 
                         json.dumps(q["breakdown"]), r["full_name"]
                     ))
                     conn.commit()
@@ -403,6 +436,8 @@ class OpenHubApp(App):
                 
                 # Refresh UI
                 self.refresh_active_views()
+                if backoff:
+                    await asyncio.sleep(60)
 
             except Exception as e:
                 logger.error(f"Scorer worker exception: {e}")
@@ -426,6 +461,16 @@ class OpenHubApp(App):
         """Triggers view swaps inside ContentSwitcher."""
         switcher = self.query_one(ContentSwitcher)
         switcher.current = view_name
+        self.refresh_active_views()
+        if view_name == "installed":
+            asyncio.create_task(self.check_skill_updates())
+
+    async def check_skill_updates(self) -> None:
+        """Background check of installed skills against their GitHub source (cached for a few hours)."""
+        from app.local_skills import check_for_updates
+        errors = await check_for_updates(self.provider, get_installed_packages())
+        if errors:
+            self.notify(errors[0], title="Update Check Failed", severity="warning")
         self.refresh_active_views()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:

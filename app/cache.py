@@ -1,7 +1,10 @@
 import os
 import sqlite3
 import json
+import logging
 from datetime import datetime
+
+logger = logging.getLogger("opencode-hub.cache")
 
 DB_DIR = os.path.expanduser("~/.cache/opencode-hub")
 DB_PATH = os.path.join(DB_DIR, "repos.db")
@@ -52,6 +55,23 @@ def init_db():
     );
     """)
 
+    # Columns added after v0.1.3: link local skills to their source repo and cache update checks
+    existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(installed_packages)")}
+    for col in ("repo_slug", "local_paths", "latest_version", "latest_ref", "checked_at"):
+        if col not in existing_cols:
+            cursor.execute(f"ALTER TABLE installed_packages ADD COLUMN {col} TEXT")
+    if "local_paths" not in existing_cols:
+        # Rows from before this migration came from the old disk scanner (wrong versions, non-skill
+        # folders) or the simulated installer. The next disk scan recreates the real ones.
+        cursor.execute("DELETE FROM installed_packages")
+
+    # Older versions cached a "Could not fetch README" placeholder on network/rate-limit failures,
+    # which also skewed classification. Clear those so the scorer retries them.
+    cursor.execute("""
+    UPDATE repositories SET readme_preview = NULL, quality_score = NULL, quality_breakdown = NULL
+    WHERE readme_preview LIKE '%Could not fetch README from GitHub.%'
+    """)
+
     # Table 3: History Log
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS history_log (
@@ -79,97 +99,121 @@ def save_repositories(repos):
     now_str = datetime.utcnow().isoformat()
 
     for r in repos:
-        # Check if we already have this repository and preserve details like readme_preview or quality_score if they aren't provided
-        cursor.execute("SELECT quality_score, quality_breakdown, readme_preview, use_case, impl_type, difficulty FROM repositories WHERE full_name = ?", (r["full_name"],))
-        existing = cursor.fetchone()
-        
-        q_score = r.get("quality_score")
-        q_breakdown = r.get("quality_breakdown")
-        readme = r.get("readme_preview")
-        use_case = r.get("use_case")
-        impl_type = r.get("impl_type")
-        difficulty = r.get("difficulty")
-
-        if existing:
-            if q_score is None:
-                q_score = existing["quality_score"]
-            if q_breakdown is None:
-                q_breakdown = existing["quality_breakdown"]
-            if readme is None:
-                readme = existing["readme_preview"]
-            if use_case is None:
-                use_case = existing["use_case"]
-            if impl_type is None:
-                impl_type = existing["impl_type"]
-            if difficulty is None:
-                difficulty = existing["difficulty"]
-
-        # Run classification immediately if fields are still missing
-        if not use_case or not impl_type or not difficulty:
-            from app.classifier import classify_repository
-            c_uc, c_it, c_diff = classify_repository(r, readme or "")
-            use_case = use_case or c_uc
-            impl_type = impl_type or c_it
-            difficulty = difficulty or c_diff
-
-        tags_str = json.dumps(r.get("tags", []))
-        if isinstance(q_breakdown, dict):
-            q_breakdown = json.dumps(q_breakdown)
-
-        cursor.execute("""
-        INSERT INTO repositories (
-            id, name, owner, full_name, description, html_url, stars, forks, open_issues,
-            language, license, created_at, updated_at, pushed_at, use_case, impl_type, difficulty,
-            tags, quality_score, quality_breakdown, readme_preview, is_verified, cached_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(full_name) DO UPDATE SET
-            name=excluded.name,
-            owner=excluded.owner,
-            description=excluded.description,
-            html_url=excluded.html_url,
-            stars=excluded.stars,
-            forks=excluded.forks,
-            open_issues=excluded.open_issues,
-            language=excluded.language,
-            license=excluded.license,
-            updated_at=excluded.updated_at,
-            pushed_at=excluded.pushed_at,
-            use_case=coalesce(?, use_case),
-            impl_type=coalesce(?, impl_type),
-            difficulty=coalesce(?, difficulty),
-            tags=excluded.tags,
-            quality_score=coalesce(?, quality_score),
-            quality_breakdown=coalesce(?, quality_breakdown),
-            readme_preview=coalesce(?, readme_preview),
-            is_verified=excluded.is_verified,
-            cached_at=excluded.cached_at
-        """, (
-            r["id"], r["name"], r["owner"], r["full_name"], r.get("description"), r["html_url"],
-            r.get("stars", 0), r.get("forks", 0), r.get("open_issues", 0), r.get("language"),
-            r.get("license"), r.get("created_at"), r.get("updated_at"), r.get("pushed_at"),
-            use_case, impl_type, difficulty, tags_str, q_score, q_breakdown, readme,
-            1 if r.get("is_verified") else 0, now_str,
-            use_case, impl_type, difficulty, q_score, q_breakdown, readme
-        ))
+        try:
+            _save_repository(cursor, r, now_str)
+        except sqlite3.Error as e:
+            # One bad row shouldn't discard the rest of a sync
+            logger.warning(f"Skipped caching {r.get('full_name')}: {e}")
 
     conn.commit()
     conn.close()
 
-def get_repositories(limit=100):
-    """Fetches cached repositories from the database."""
+
+def _save_repository(cursor, r, now_str):
+    """Upserts one repository row (see save_repositories)."""
+    # GitHub keeps a repo's id when it is renamed or transferred. Move the cached row to the new
+    # name (keeping its README and score) so the id doesn't collide with the UNIQUE constraint.
+    cursor.execute("SELECT full_name FROM repositories WHERE id = ?", (r["id"],))
+    by_id = cursor.fetchone()
+    if by_id and by_id["full_name"] != r["full_name"]:
+        cursor.execute("DELETE FROM repositories WHERE full_name = ? AND id <> ?", (r["full_name"], r["id"]))
+        cursor.execute("UPDATE repositories SET full_name = ? WHERE id = ?", (r["full_name"], r["id"]))
+
+    # Check if we already have this repository and preserve details like readme_preview or quality_score if they aren't provided
+    cursor.execute("SELECT quality_score, quality_breakdown, readme_preview, use_case, impl_type, difficulty FROM repositories WHERE full_name = ?", (r["full_name"],))
+    existing = cursor.fetchone()
+
+    q_score = r.get("quality_score")
+    q_breakdown = r.get("quality_breakdown")
+    readme = r.get("readme_preview")
+    use_case = r.get("use_case")
+    impl_type = r.get("impl_type")
+    difficulty = r.get("difficulty")
+
+    if existing:
+        if q_score is None:
+            q_score = existing["quality_score"]
+        if q_breakdown is None:
+            q_breakdown = existing["quality_breakdown"]
+        if readme is None:
+            readme = existing["readme_preview"]
+        if use_case is None:
+            use_case = existing["use_case"]
+        if impl_type is None:
+            impl_type = existing["impl_type"]
+        if difficulty is None:
+            difficulty = existing["difficulty"]
+
+    # Run classification immediately if fields are still missing
+    if not use_case or not impl_type or not difficulty:
+        from app.classifier import classify_repository
+        c_uc, c_it, c_diff = classify_repository(r, readme or "")
+        use_case = use_case or c_uc
+        impl_type = impl_type or c_it
+        difficulty = difficulty or c_diff
+
+    tags_str = json.dumps(r.get("tags", []))
+    if isinstance(q_breakdown, dict):
+        q_breakdown = json.dumps(q_breakdown)
+
+    cursor.execute("""
+    INSERT INTO repositories (
+        id, name, owner, full_name, description, html_url, stars, forks, open_issues,
+        language, license, created_at, updated_at, pushed_at, use_case, impl_type, difficulty,
+        tags, quality_score, quality_breakdown, readme_preview, is_verified, cached_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(full_name) DO UPDATE SET
+        name=excluded.name,
+        owner=excluded.owner,
+        description=excluded.description,
+        html_url=excluded.html_url,
+        stars=excluded.stars,
+        forks=excluded.forks,
+        open_issues=excluded.open_issues,
+        language=excluded.language,
+        license=excluded.license,
+        updated_at=excluded.updated_at,
+        pushed_at=excluded.pushed_at,
+        use_case=coalesce(?, use_case),
+        impl_type=coalesce(?, impl_type),
+        difficulty=coalesce(?, difficulty),
+        tags=excluded.tags,
+        quality_score=coalesce(?, quality_score),
+        quality_breakdown=coalesce(?, quality_breakdown),
+        readme_preview=coalesce(?, readme_preview),
+        is_verified=excluded.is_verified,
+        cached_at=excluded.cached_at
+    """, (
+        r["id"], r["name"], r["owner"], r["full_name"], r.get("description"), r["html_url"],
+        r.get("stars", 0), r.get("forks", 0), r.get("open_issues", 0), r.get("language"),
+        r.get("license"), r.get("created_at"), r.get("updated_at"), r.get("pushed_at"),
+        use_case, impl_type, difficulty, tags_str, q_score, q_breakdown, readme,
+        1 if r.get("is_verified") else 0, now_str,
+        use_case, impl_type, difficulty, q_score, q_breakdown, readme
+    ))
+
+def _decode_repo(row) -> dict:
+    repo = dict(row)
+    repo["tags"] = json.loads(repo["tags"]) if repo["tags"] else []
+    repo["quality_breakdown"] = json.loads(repo["quality_breakdown"]) if repo["quality_breakdown"] else {}
+    repo["is_verified"] = bool(repo["is_verified"])
+    return repo
+
+def get_repositories(limit=None, use_case=None, impl_type=None):
+    """Fetches cached repositories by stars, optionally filtered. limit=None returns all matches."""
+    conditions, params = [], []
+    if use_case:
+        conditions.append("lower(use_case) = lower(?)")
+        params.append(use_case)
+    if impl_type:
+        conditions.append("lower(impl_type) = lower(?)")
+        params.append(impl_type)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM repositories ORDER BY stars DESC LIMIT ?", (limit,))
-    rows = cursor.fetchall()
-    
-    repos = []
-    for row in rows:
-        repo = dict(row)
-        repo["tags"] = json.loads(repo["tags"]) if repo["tags"] else []
-        repo["quality_breakdown"] = json.loads(repo["quality_breakdown"]) if repo["quality_breakdown"] else {}
-        repo["is_verified"] = bool(repo["is_verified"])
-        repos.append(repo)
-        
+    cursor.execute(f"SELECT * FROM repositories {where} ORDER BY stars DESC LIMIT ?",
+                   (*params, -1 if limit is None else limit))
+    repos = [_decode_repo(row) for row in cursor.fetchall()]
     conn.close()
     return repos
 
@@ -213,38 +257,40 @@ def update_repository_readme(full_name, readme_content):
     conn.commit()
     conn.close()
 
-def find_skill_md(dir_path: str) -> tuple[str | None, str | None]:
-    """Finds directory containing SKILL.md in dir_path or nested subdirectories."""
-    if os.path.exists(os.path.join(dir_path, "SKILL.md")):
-        return dir_path, os.path.join(dir_path, "SKILL.md")
-    for root, dirs, files in os.walk(dir_path):
-        if "SKILL.md" in files:
-            return root, os.path.join(root, "SKILL.md")
-    return None, None
+def _decode_installed(row) -> dict:
+    pkg = dict(row)
+    pkg["local_paths"] = json.loads(pkg["local_paths"]) if pkg.get("local_paths") else []
+    return pkg
 
 def sync_installed_from_disk():
     """Scans local project and global skill directories to populate installed_packages table."""
-    dirs_to_scan = [
-        os.path.abspath("./.opencode/skills"),
-        os.path.abspath("./.agents/skills"),
-        os.path.abspath("./.claude/skills"),
-        os.path.expanduser("~/.config/opencode/skills"),
-        os.path.expanduser("~/.agents/skills"),
-        os.path.expanduser("~/.claude/skills"),
-        os.path.expanduser("~/.claude/plugins"),
-    ]
-    for base_dir in dirs_to_scan:
-        if not os.path.exists(base_dir):
-            continue
-        try:
-            for item in os.listdir(base_dir):
-                item_path = os.path.join(base_dir, item)
-                if os.path.isdir(item_path):
-                    skill_dir, skill_file = find_skill_md(item_path)
-                    if skill_file or os.path.exists(os.path.join(item_path, ".claude-plugin")):
-                        add_installed_package(item, "1.0.0", "INSTALLED", "Skills")
-        except Exception as e:
-            logger.warning(f"Error scanning directory {base_dir} for skills: {e}")
+    from app.local_skills import scan_local_skills, is_ignored_dir
+
+    skills = scan_local_skills()
+    conn = get_connection()
+    cursor = conn.cursor()
+    for name, info in skills.items():
+        skill_md = os.path.join(info["paths"][0], "SKILL.md")
+        first_seen = datetime.utcfromtimestamp(
+            os.path.getmtime(skill_md if os.path.exists(skill_md) else info["paths"][0])
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+        INSERT INTO installed_packages (package_slug, version, installed_at, status, impl_type, repo_slug, local_paths)
+        VALUES (?, ?, ?, 'INSTALLED', 'Skills', ?, ?)
+        ON CONFLICT(package_slug) DO UPDATE SET
+            version=excluded.version,
+            status=excluded.status,
+            repo_slug=excluded.repo_slug,
+            local_paths=excluded.local_paths
+        """, (name, info["version"] or "unknown", first_seen, info["repo_slug"], json.dumps(info["paths"])))
+
+    # Drop entries whose folders are gone, and non-skill folders recorded by older scanners
+    cursor.execute("SELECT package_slug, local_paths FROM installed_packages")
+    for slug, local_paths in cursor.fetchall():
+        if is_ignored_dir(slug) or (local_paths and slug not in skills):
+            cursor.execute("DELETE FROM installed_packages WHERE package_slug = ?", (slug,))
+    conn.commit()
+    conn.close()
 
 def get_installed_packages():
     """Gets all installed packages (syncing with disk first)."""
@@ -257,7 +303,7 @@ def get_installed_packages():
     cursor.execute("SELECT * FROM installed_packages ORDER BY installed_at DESC")
     rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return [_decode_installed(row) for row in rows]
 
 def get_installed_package(slug):
     """Gets a specific installed package details."""
@@ -266,7 +312,28 @@ def get_installed_package(slug):
     cursor.execute("SELECT * FROM installed_packages WHERE package_slug = ?", (slug,))
     row = cursor.fetchone()
     conn.close()
-    return dict(row) if row else None
+    return _decode_installed(row) if row else None
+
+def get_installed_by_repo(full_name):
+    """Gets the installed package linked to a GitHub owner/repo, if any."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM installed_packages WHERE package_slug = ? OR lower(repo_slug) = lower(?)",
+                   (full_name, full_name))
+    row = cursor.fetchone()
+    conn.close()
+    return _decode_installed(row) if row else None
+
+def set_update_check(slug, latest_version, latest_ref):
+    """Caches the result of an upstream update check for an installed package."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    UPDATE installed_packages SET latest_version = ?, latest_ref = ?, checked_at = ?
+    WHERE package_slug = ?
+    """, (latest_version, latest_ref, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), slug))
+    conn.commit()
+    conn.close()
 
 def add_installed_package(slug, version, status, impl_type):
     """Adds or updates an installed package."""

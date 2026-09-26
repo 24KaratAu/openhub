@@ -26,7 +26,7 @@ class HomeView(ScrollableContainer):
         self.refresh_dashboard()
 
     def refresh_dashboard(self) -> None:
-        repos = get_repositories(limit=150)
+        repos = get_repositories()
         installed = get_installed_packages()
         
         home_list = self.query_one("#home-list", ListView)

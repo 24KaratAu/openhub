@@ -1,17 +1,9 @@
 import os
 import shutil
 import logging
+from app.local_skills import find_skill_md, is_ignored_dir
 
 logger = logging.getLogger("opencode-hub.env_detector")
-
-def find_skill_md(dir_path: str) -> tuple[str | None, str | None]:
-    """Finds directory containing SKILL.md in dir_path or nested subdirectories."""
-    if os.path.exists(os.path.join(dir_path, "SKILL.md")):
-        return dir_path, os.path.join(dir_path, "SKILL.md")
-    for root, dirs, files in os.walk(dir_path):
-        if "SKILL.md" in files:
-            return root, os.path.join(root, "SKILL.md")
-    return None, None
 
 def detect_unsynced_environments() -> dict | None:
     """
@@ -43,7 +35,7 @@ def detect_unsynced_environments() -> dict | None:
         try:
             for item in os.listdir(src):
                 item_path = os.path.join(src, item)
-                if os.path.isdir(item_path):
+                if os.path.isdir(item_path) and not is_ignored_dir(item):
                     skill_dir, skill_file = find_skill_md(item_path)
                     if skill_file:
                         in_global = os.path.exists(os.path.join(target_global, item, "SKILL.md"))

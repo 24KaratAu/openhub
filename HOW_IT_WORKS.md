@@ -109,3 +109,19 @@ description: "<repository-description>"
 ```
 
 OpenCode automatically discovers and loads exported skills upon startup.
+
+---
+
+## 7. Installed Skill Updates (`app/local_skills.py`)
+
+On every visit to the Installed view, OpenHub scans the project and global skill directories (`.claude/skills`, `.agents/skills`, `.opencode/skills`, `~/.config/opencode/skills`) and reads each `SKILL.md` frontmatter:
+
+- **`version`**: the installed version. When a skill is installed in several places, the oldest copy's version is shown so an outdated copy is never hidden.
+- **`repository` / `homepage`**: the GitHub `owner/repo` the skill came from. Skills without one are listed but can't be checked for updates.
+
+Folders that are not skills (`synced`, `marketplaces`, `*.bak-*` backups, hidden folders) are skipped.
+
+**Update check**: the latest GitHub release tag is compared with the installed version. Repositories without releases fall back to the `version` in the matching `SKILL.md` on the default branch. Results are cached for 6 hours.
+
+**Update (`U`)**: downloads the release tarball, finds the folder whose `SKILL.md` `name` matches the installed skill, moves each installed copy to `~/.cache/opencode-hub/backups/<skill>-<timestamp>/`, copies in the new files and re-reads `SKILL.md` to verify the new version. Any failure restores the backups. Backups live outside skill directories so agents don't load them as duplicate skills.
+

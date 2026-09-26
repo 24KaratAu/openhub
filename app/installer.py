@@ -15,9 +15,8 @@ class AsyncInstallRunner:
         """
         cmd = f"opencode get {slug}"
         yield f"[INFO] Initializing installation sequence for {slug}..."
-        yield f"[EXEC] Executing: {cmd}"
-        
-        # Verify if 'opencode' binary exists on path and supports 'get', otherwise warn user and simulate
+
+        # Verify if 'opencode' binary exists on path and supports 'get', otherwise fail
         import shutil
         import subprocess
         opencode_exists = False
@@ -30,23 +29,13 @@ class AsyncInstallRunner:
                 pass
         
         if not opencode_exists:
-            yield "[WARN] 'opencode' binary not found on PATH or does not support 'get' subcommand."
-            yield "[INFO] Simulating installation sequence..."
-            await asyncio.sleep(0.5)
-            yield "[FETCH] Fetching source manifest from registry..."
-            await asyncio.sleep(0.5)
-            yield f"[DOWN] Downloading resources for {slug}..."
-            await asyncio.sleep(0.5)
-            yield "[CONF] Configuring environment variables..."
-            await asyncio.sleep(0.5)
-            yield "[OK] Verification complete."
-            
-            # Successful mock run
-            add_installed_package(slug, "1.0.0", "installed", impl_type)
-            log_history(slug, "installed", "Simulated installation complete.")
-            yield f"[SUCCESS] Successfully installed {slug}."
+            msg = "'opencode' is not on PATH or has no 'get' subcommand, so there is no installer for this package."
+            log_history(slug, "failed", msg)
+            yield f"[FAIL] {msg}"
+            yield "[INFO] Nothing was installed. For skills, use Export (E), or Update (U) on an installed skill."
             return
 
+        yield f"[EXEC] Executing: {cmd}"
         try:
             process = await asyncio.create_subprocess_shell(
                 cmd,

@@ -4,7 +4,9 @@ import sys
 import subprocess
 
 SCRIPTS = [
-    "test_core.py"
+    "test_core.py",
+    "test_local_skills.py",
+    "test_catalog.py"
 ]
 
 TESTS_DIR = os.path.join(os.path.dirname(__file__), "tests")

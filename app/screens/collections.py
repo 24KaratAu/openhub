@@ -35,7 +35,7 @@ class CollectionsView(ScrollableContainer):
         self.refresh_list()
 
     def refresh_list(self) -> None:
-        repos = get_repositories(limit=200)
+        repos = get_repositories()
         collection_list = self.query_one("#collection-list", ListView)
         collection_list.clear()
 
